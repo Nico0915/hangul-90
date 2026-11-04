@@ -1,1 +1,45 @@
-Lyog7ZWc6riAIDkwIOKAlCDnprvnur/nvJPlrZgKICAg6Z+z6aKR77yaY2FjaGUtZmlyc3TvvIjpppbmrKHmkq3mlL4v6aKE5LiL6L295ZCO5rC45LmF56a757q/5Y+v55So77yJCiAgIOmhtemdouS7o+egge+8mm5ldHdvcmstZmlyc3TvvIjkv53or4Hmm7TmlrDog73lj4rml7bnlJ/mlYjvvIzmlq3nvZHml7blm57pgIDnvJPlrZjvvIkgKi8KY29uc3QgQ0FDSEUgPSAnaGFuZ3VsOTAtdjMnOwpjb25zdCBDT1JFID0gWycuLycsICcuL2luZGV4Lmh0bWwnLCAnLi9zdHlsZS5jc3MnLCAnLi9kYXRhLmpzJywgJy4vYXVkaW8tbWFwLmpzJywgJy4vYXBwLmpzJywgJy4vaWNvbi5wbmcnXTsKCnNlbGYuYWRkRXZlbnRMaXN0ZW5lcignaW5zdGFsbCcsIGUgPT4gewogIGUud2FpdFVudGlsKGNhY2hlcy5vcGVuKENBQ0hFKS50aGVuKGMgPT4gYy5hZGRBbGwoQ09SRSkpLnRoZW4oKCkgPT4gc2VsZi5za2lwV2FpdGluZygpKSk7Cn0pOwoKc2VsZi5hZGRFdmVudExpc3RlbmVyKCdhY3RpdmF0ZScsIGUgPT4gewogIGUud2FpdFVudGlsKAogICAgY2FjaGVzLmtleXMoKQogICAgICAudGhlbihrcyA9PiBQcm9taXNlLmFsbChrcy5maWx0ZXIoayA9PiBrICE9PSBDQUNIRSkubWFwKGsgPT4gY2FjaGVzLmRlbGV0ZShrKSkpKQogICAgICAudGhlbigoKSA9PiBzZWxmLmNsaWVudHMuY2xhaW0oKSkKICApOwp9KTsKCnNlbGYuYWRkRXZlbnRMaXN0ZW5lcignZmV0Y2gnLCBlID0+IHsKICBjb25zdCByZXEgPSBlLnJlcXVlc3Q7CiAgaWYgKHJlcS5tZXRob2QgIT09ICdHRVQnKSByZXR1cm47CiAgY29uc3QgdXJsID0gbmV3IFVSTChyZXEudXJsKTsKICBpZiAodXJsLm9yaWdpbiAhPT0gc2VsZi5sb2NhdGlvbi5vcmlnaW4pIHJldHVybjsKCiAgaWYgKHVybC5wYXRobmFtZS5pbmRleE9mKCcvYXVkaW8vJykgIT09IC0xKSB7CiAgICBlLnJlc3BvbmRXaXRoKAogICAgICBjYWNoZXMub3BlbihDQUNIRSkudGhlbihjID0+CiAgICAgICAgYy5tYXRjaChyZXEpLnRoZW4oaGl0ID0+IGhpdCB8fCBmZXRjaChyZXEpLnRoZW4ocmVzID0+IHsKICAgICAgICAgIGlmIChyZXMgJiYgcmVzLm9rKSBjLnB1dChyZXEsIHJlcy5jbG9uZSgpKTsKICAgICAgICAgIHJldHVybiByZXM7CiAgICAgICAgfSkuY2F0Y2goKCkgPT4gaGl0KSkKICAgICAgKQogICAgKTsKICAgIHJldHVybjsKICB9CgogIGUucmVzcG9uZFdpdGgoCiAgICBmZXRjaChyZXEpLnRoZW4ocmVzID0+IHsKICAgICAgaWYgKHJlcyAmJiByZXMub2spIHsKICAgICAgICBjb25zdCBjb3B5ID0gcmVzLmNsb25lKCk7CiAgICAgICAgY2FjaGVzLm9wZW4oQ0FDSEUpLnRoZW4oYyA9PiBjLnB1dChyZXEsIGNvcHkpKTsKICAgICAgfQogICAgICByZXR1cm4gcmVzOwogICAgfSkuY2F0Y2goKCkgPT4gY2FjaGVzLm1hdGNoKHJlcSkudGhlbihoaXQgPT4gaGl0IHx8IGNhY2hlcy5tYXRjaCgnLi9pbmRleC5odG1sJykpKQogICk7Cn0pOwo=
+/* 한글 90 — 离线缓存
+   音频：cache-first（首次播放/预下载后永久离线可用）
+   页面代码：network-first（保证更新能及时生效，断网时回退缓存） */
+const CACHE = 'hangul90-v4';
+const CORE = ['./', './index.html', './style.css', './data.js', './timeline.js', './app.js', './icon.png'];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(Promise.all([
+    caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))),
+    caches.open(CACHE).then(c => c.add('./audio/all.m4a').catch(() => { }))
+  ]).then(() => self.clients.claim()));
+});
+
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+
+  if (url.pathname.indexOf('/audio/') !== -1) {
+    e.respondWith(
+      caches.open(CACHE).then(c =>
+        c.match(req).then(hit => hit || fetch(req).then(res => {
+          if (res && res.ok) c.put(req, res.clone());
+          return res;
+        }).catch(() => hit))
+      )
+    );
+    return;
+  }
+
+  e.respondWith(
+    fetch(req).then(res => {
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(req, copy));
+      }
+      return res;
+    }).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html')))
+  );
+});

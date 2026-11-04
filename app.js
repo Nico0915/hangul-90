@@ -111,27 +111,39 @@ const SPEEDS = [
 function speedVal() { return (SPEEDS.find(x => x.key === S.settings.speed) || SPEEDS[0]).v; }
 function speedLabel() { return (SPEEDS.find(x => x.key === S.settings.speed) || SPEEDS[0]).label; }
 
-let clipAudio = null;
-function playClip(text, rate) {
-  return new Promise(resolve => {
-    const key = String(text).trim();
-    const id = (typeof AUDIO_MAP !== 'undefined') ? AUDIO_MAP[key] : null;
-    if (!id) { resolve(false); return; }
-    if (!clipAudio) { clipAudio = new Audio(); clipAudio.preload = 'auto'; }
-    try {
-      clipAudio.pause();
-      clipAudio.src = 'audio/' + id + '.m4a';
-      clipAudio.playbackRate = rate || speedVal();
-      try { clipAudio.load(); } catch (e) { }
-      let done = false;
-      const fin = (ok) => { if (done) return; done = true; clearTimeout(timer); resolve(ok); };
-      clipAudio.onended = () => fin(true);
-      clipAudio.onerror = () => fin(false);
-      const timer = setTimeout(() => fin(true), Math.max(2600, key.length * 400) + 1500);
-      const p = clipAudio.play();
-      if (p && p.catch) p.catch(() => fin(false));
-    } catch (e) { resolve(false); }
-  });
+let mergedAudio = null;
+let mergedReady = null;
+function getMerged() {
+  if (!mergedReady) {
+    mergedAudio = new Audio();
+    mergedAudio.preload = 'auto';
+    mergedAudio.src = 'audio/all.m4a';
+    mergedReady = new Promise(res => {
+      if (mergedAudio.readyState >= 1) { res(true); return; }
+      mergedAudio.addEventListener('loadedmetadata', () => res(true), { once: true });
+      mergedAudio.addEventListener('error', () => res(false), { once: true });
+      setTimeout(() => res(mergedAudio.readyState >= 1), 15000);
+    });
+    try { mergedAudio.load(); } catch (e) { }
+  }
+  return mergedReady;
+}
+
+async function playClip(text, rate) {
+  const seg = (typeof AUDIO_TIMELINE !== 'undefined') ? AUDIO_TIMELINE[String(text).trim()] : null;
+  if (!seg) return false;
+  const ready = await getMerged();
+  if (!ready) return false;
+  const r = rate || speedVal();
+  try {
+    mergedAudio.pause();
+    mergedAudio.currentTime = Math.max(0, seg[0]);
+    mergedAudio.playbackRate = r;
+    await mergedAudio.play();
+  } catch (e) { return false; }
+  await sleep(Math.max(450, (seg[1] * 1000) / r));
+  try { mergedAudio.pause(); } catch (e) { }
+  return true;
 }
 
 function koVoices() {
@@ -189,21 +201,18 @@ async function speakSpell(text, rate) {
 
 function stopSpeak() {
   if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) { } }
-  if (clipAudio) { try { clipAudio.pause(); } catch (e) { } }
+  if (mergedAudio) { try { mergedAudio.pause(); } catch (e) { } }
 }
 
-/* 后台预下载全部离线音频，供地铁无网时使用 */
+/* 加载离线音频包（单个文件，Service Worker 会把它缓存下来） */
 let offlineBusy = false;
 async function precacheAll(progress) {
-  if (offlineBusy || typeof AUDIO_MAP === 'undefined') return;
+  if (offlineBusy) return;
   offlineBusy = true;
-  const ids = Object.values(AUDIO_MAP);
-  for (let i = 0; i < ids.length; i += 6) {
-    await Promise.all(ids.slice(i, i + 6).map(id =>
-      fetch('audio/' + id + '.m4a', { cache: 'force-cache' }).catch(() => { })));
-    if (progress) progress(Math.min(i + 6, ids.length), ids.length);
-  }
+  await getMerged();
+  await fetch('audio/all.m4a', { cache: 'force-cache' }).catch(() => { });
   offlineBusy = false;
+  if (progress) progress(1, 1);
 }
 
 /* ---------- router ---------- */
@@ -750,9 +759,9 @@ function renderCommute() {
   <h2 class="section">离线音频</h2>
   <div class="card" style="padding:16px;">
     <p class="tiny muted" style="margin:0 0 10px;line-height:1.7;">
-      点过的句子会自动存到手机里。出发前点一下「预下载全部」，把全部短句缓存好，地铁没信号也能完整听一轮。
+      整段发音打包在一个音频文件里，点过的部分会存到手机。出发前点一下「加载离线音频包」，地铁没信号也能完整听一轮。
     </p>
-    <button class="btn" data-act="predownload" type="button" id="preBtn" ${S.offlineReady ? 'disabled' : ''}>${S.offlineReady ? '已缓存完成' : '预下载全部音频（约 7 MB）'}</button>
+    <button class="btn" data-act="predownload" type="button" id="preBtn" ${S.offlineReady ? 'disabled' : ''}>${S.offlineReady ? '离线包已就绪' : '加载离线音频包（约 4 MB）'}</button>
     <div id="preMsg" class="tiny muted" style="margin:8px 0 0;">${S.offlineReady ? '全部音频已存到这台设备' : ''}</div>
   </div>
 
@@ -913,13 +922,13 @@ function bindView() {
       if (a === 'predownload') {
         const btn = $('#preBtn'), msg = $('#preMsg');
         if (btn) { btn.disabled = true; btn.textContent = '正在缓存…'; }
-        precacheAll((done, total) => {
-          const m = $('#preMsg'); if (m) m.textContent = `已缓存 ${done} / ${total}`;
+        precacheAll(() => {
+          const m = $('#preMsg'); if (m) m.textContent = '离线音频包已加载完成';
         }).then(() => {
           S.offlineReady = true; save();
           const b = $('#preBtn'), m = $('#preMsg');
-          if (b) b.textContent = '已缓存完成';
-          if (m) m.textContent = '全部音频已存到这台设备，之后没网也能听';
+          if (b) b.textContent = '离线包已就绪';
+          if (m) m.textContent = '全部发音已存到这台设备，之后没网也能听';
         });
       }
       if (a === 'reset') {

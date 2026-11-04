@@ -24,7 +24,7 @@ function shuffle(a) {
 const DEF = {
   streak: 0, last: null, minutes: {}, doneWeeks: [], currentWeek: 1,
   srs: {}, quiz: { right: 0, total: 0 },
-  settings: { rate: 0.92, blind: false, gap: 2600, loop: false, scene: 'week' },
+  settings: { rate: 0.8, blind: false, gap: 2600, loop: false, scene: 'week', spell: false },
   starts: null
 };
 
@@ -32,7 +32,9 @@ let S = (() => {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return JSON.parse(JSON.stringify(DEF));
-    return Object.assign(JSON.parse(JSON.stringify(DEF)), JSON.parse(raw));
+    const merged = Object.assign(JSON.parse(JSON.stringify(DEF)), JSON.parse(raw));
+    if (merged.settings && merged.settings.rate === 0.92) merged.settings.rate = 0.8; /* 旧默认提速感太赶，降速 */
+    return merged;
   } catch (e) { return JSON.parse(JSON.stringify(DEF)); }
 })();
 
@@ -85,36 +87,94 @@ function weekVocab(w) { return (VOCAB.find(v => v.wk === w) || { words: [] }).wo
 function allWordsUpTo(w) { return VOCAB.filter(v => v.wk <= w).flatMap(v => v.words); }
 
 /* ---------- TTS ---------- */
-let voiceCache = null;
-function koVoice() {
-  if (voiceCache !== null) return voiceCache;
-  if (!('speechSynthesis' in window)) { voiceCache = false; return false; }
-  const vs = speechSynthesis.getVoices();
-  voiceCache = vs.find(v => (v.lang || '').toLowerCase().startsWith('ko')) || false;
-  return voiceCache;
-}
-if ('speechSynthesis' in window) {
-  speechSynthesis.onvoiceschanged = () => { voiceCache = null; koVoice(); };
+/* 策略：优先本机韩语语音；没有则自动回退在线朗读（韩语音源）；再失败给出引导提示 */
+let voiceWarned = false;
+let toastEl = null;
+function showToast(msg, ms) {
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.className = 'toast';
+    document.body.appendChild(toastEl);
+  }
+  toastEl.textContent = msg;
+  toastEl.classList.add('is-on');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toastEl.classList.remove('is-on'), ms || 3200);
 }
 
-function speak(text, rate) {
+function koVoices() {
+  if (!('speechSynthesis' in window)) return [];
+  return speechSynthesis.getVoices().filter(v => (v.lang || '').toLowerCase().startsWith('ko'));
+}
+function pickKoVoice() {
+  const vs = koVoices();
+  if (!vs.length) return null;
+  const score = v =>
+    ((v.lang || '').toLowerCase() === 'ko-kr' ? 4 : 0) +
+    (v.localService ? 2 : 0) +
+    (/yuna|google|siri/i.test(v.name) ? 2 : 0) +
+    (/heami/i.test(v.name) ? 1 : 0) -
+    (/eloquence|compact/i.test(v.name) ? 1 : 0);
+  return vs.sort((a, b) => score(b) - score(a))[0];
+}
+if ('speechSynthesis' in window) {
+  speechSynthesis.onvoiceschanged = () => { };
+}
+
+let audioEl = null;
+function playOnline(text, slow) {
   return new Promise(resolve => {
-    if (!('speechSynthesis' in window)) { setTimeout(resolve, Math.max(1200, text.length * 180)); return; }
-    try { speechSynthesis.cancel(); } catch (e) { }
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ko-KR';
-    u.rate = rate || S.settings.rate;
-    const v = koVoice();
-    if (v) u.voice = v;
+    if (!audioEl) audioEl = new Audio();
+    audioEl.src = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ko&ttsspeed=' + (slow ? '0.4' : '1') + '&q=' + encodeURIComponent(text);
     let done = false;
     const fin = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
-    u.onend = fin; u.onerror = fin;
-    const timer = setTimeout(fin, Math.max(1600, text.length * 260) + 900);
-    speechSynthesis.speak(u);
+    audioEl.onended = fin;
+    audioEl.onerror = () => {
+      if (!voiceWarned) {
+        voiceWarned = true;
+        showToast('在线朗读不可用（需联网）。建议在 iPhone「设置 → 辅助功能 → 朗读内容 → 声音」下载韩语语音。', 5000);
+      }
+      setTimeout(resolve, Math.max(1000, text.length * 220));
+    };
+    const timer = setTimeout(fin, Math.max(2500, text.length * 320) + 1500);
+    audioEl.play().catch(() => { });
   });
 }
 
-function stopSpeak() { if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) { } } }
+function speak(text, rate, opts) {
+  const o = opts || {};
+  return new Promise(resolve => {
+    const v = pickKoVoice();
+    if (!v) { playOnline(text, (rate || 0.85) < 0.9).then(resolve); return; }
+    try { speechSynthesis.cancel(); } catch (e) { }
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = v.lang;
+    u.voice = v;
+    u.rate = rate || S.settings.rate;
+    u.pitch = 1;
+    let done = false;
+    const fin = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
+    u.onend = fin; u.onerror = fin;
+    const timer = setTimeout(fin, Math.max(1600, text.length * 300) + 1200);
+    setTimeout(() => { try { speechSynthesis.speak(u); } catch (e) { fin(); } }, 40);
+  });
+}
+
+/* 逐音节拼读：每个字慢读一遍，最后整句再读一遍 */
+async function speakSpell(text, rate) {
+  const syl = String(text).replace(/\s+/g, '').split('');
+  for (const s of syl) {
+    await speak(s, 0.7);
+    await sleep(180);
+  }
+  await sleep(300);
+  await speak(text, rate || 0.85);
+}
+
+function stopSpeak() {
+  if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) { } }
+  if (audioEl) { try { audioEl.pause(); } catch (e) { } }
+}
 
 /* ---------- router ---------- */
 let VIEW = 'home';
@@ -130,7 +190,7 @@ function go(v, p) {
 
 function render() {
   const host = $('#view');
-  const map = { home: renderHome, plan: renderPlan, basics: renderBasics, practice: renderPractice, commute: renderCommute, cards: renderCards };
+  const map = { home: renderHome, plan: renderPlan, basics: renderBasics, practice: renderPractice, commute: renderCommute, cards: renderCards, intro: renderIntro };
   host.innerHTML = (map[VIEW] || renderHome)();
   $$('.tab').forEach(t => t.classList.toggle('is-active', t.dataset.view === VIEW));
   paintStreak();
@@ -140,6 +200,53 @@ $('#tabbar').addEventListener('click', e => {
   const b = e.target.closest('.tab');
   if (b) go(b.dataset.view);
 });
+
+/* ---------- INTRO（初识韩文） ---------- */
+let introOpen = null; /* 当前展开拆解的词 */
+
+function renderIntro() {
+  return `
+  <h1 class="page-title">初识韩文</h1>
+  <p class="page-sub">开始第一课之前，先花 3 分钟弄懂一件事：韩文字的读音是怎么来的。</p>
+
+  ${INTRO_FACTS.map(f => `
+    <div class="card intro-fact">
+      <h3>${esc(f.t)}</h3>
+      <p>${esc(f.d)}</p>
+    </div>`).join('')}
+
+  <h2 class="section">点一个词，看它怎么拼出来</h2>
+  <p class="tiny muted" style="margin:-4px 0 12px;">点词块展开字母拆解，点喇叭听读音。</p>
+  <div class="intro-words">
+    ${INTRO_WORDS.map((it, i) => `
+      <div class="intro-word ${introOpen === i ? 'is-open' : ''}">
+        <div class="intro-word-head">
+          <button class="intro-block" data-iw="${i}" type="button">
+            <span class="iw-w">${esc(it.w)}</span>
+            <span class="iw-cn">${esc(it.cn)}</span>
+          </button>
+          <button class="speak" data-say="${esc(it.w)}" type="button" aria-label="朗读"><svg viewBox="0 0 16 16"><path d="M6 3.2 3.4 5.4H1.8v5.2h1.6L6 12.8V3.2Z" fill="currentColor"/><path d="M9.2 5.6a3.4 3.4 0 0 1 0 4.8M11.2 3.9a6.2 6.2 0 0 1 0 8.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+        </div>
+        ${introOpen === i ? `
+        <div class="intro-split">
+          ${it.syl.map(s => `
+            <div class="intro-syl">
+              <div class="is-block">${esc(s.block)}</div>
+              <div class="is-pieces">
+                ${s.pieces.map(p => `<div class="is-piece"><b>${esc(p[0])}</b><span>${esc(p[1])}</span></div>`).join('')}
+              </div>
+              <div class="is-note">${esc(s.note)}</div>
+            </div>`).join('')}
+        </div>` : ''}
+      </div>`).join('')}
+  </div>
+
+  <div class="card" style="margin-top:18px;text-align:center;padding:22px 18px;">
+    <p style="margin:0 0 4px;font-size:15px;font-weight:600;">大概明白了吧？</p>
+    <p class="tiny muted" style="margin:0 0 16px;">下一步就是认识这 40 个字母。第一周的目标只是「能读」，不用背。</p>
+    <button class="btn" data-act="go-alphabet" type="button">去字母表，开始第一课</button>
+  </div>`;
+}
 
 /* ---------- HOME ---------- */
 function weekMinTotal() {
@@ -193,6 +300,15 @@ function renderHome() {
       <span>本周 <b>${wd}</b>/5 次</span>
     </div>
   </div>
+
+  <button class="intro-banner ${S.introDone ? '' : 'is-new'}" data-act="intro" type="button">
+    <span class="ib-ico">가</span>
+    <span class="act-body">
+      <span class="act-title">${S.introDone ? '初识韩文' : '0 基础？先看这个'}</span>
+      <span class="act-sub">${S.introDone ? '韩文字的读音是怎么拼出来的' : '3 分钟弄懂韩文字的读音从哪来'}</span>
+    </span>
+    <span class="act-arrow">›</span>
+  </button>
 
   <h2 class="section">现在有多久</h2>
   <div class="dur-row">
@@ -555,7 +671,7 @@ function initPlayer() {
 function renderCommute() {
   if (!player.list.length) initPlayer();
   const w = curWeek();
-  const hasVoice = !!koVoice();
+  const hasVoice = !!pickKoVoice();
   const item = player.list[Math.min(player.i, player.list.length - 1)] || { ko: '', cn: '', rm: '' };
   const blind = S.settings.blind;
 
@@ -563,8 +679,8 @@ function renderCommute() {
   <h1 class="page-title">通勤模式</h1>
   <p class="page-sub">不用看屏幕，戴上耳机就行。中文提示 → 韩语朗读 → 留白给你跟读。</p>
 
-  ${hasVoice ? '' : `<div class="notice" style="margin-bottom:14px;">
-    这台设备上没有找到韩语语音包，朗读会退化成静音计时。可以在系统设置里添加韩语语音后再试。</div>`}
+  ${hasVoice ? `<div class="notice" style="margin-bottom:14px;">朗读语音：${esc(pickKoVoice().name)}（本机韩语语音）</div>`
+    : `<div class="notice" style="margin-bottom:14px;">这台设备没有本机韩语语音，将自动使用<b>在线朗读</b>（需要网络）。建议在 iPhone「设置 → 辅助功能 → 朗读内容 → 声音」里下载韩语语音，音质更好且离线可用。</div>`}
 
   <div class="player">
     <div class="pl-idx">${esc(playerLabel())} · ${player.i + 1} / ${player.list.length}</div>
@@ -598,6 +714,7 @@ function renderCommute() {
     <button class="opt-pill ${blind ? 'is-on' : ''}" data-set="blind" type="button">盲听（隐藏文字）</button>
     <button class="opt-pill ${S.settings.loop ? 'is-on' : ''}" data-set="loop" type="button">循环播放</button>
     <button class="opt-pill ${S.settings.rate < 0.9 ? 'is-on' : ''}" data-set="slow" type="button">慢速</button>
+    <button class="opt-pill ${S.settings.spell ? 'is-on' : ''}" data-set="spell" type="button">逐字拼读（初学推荐）</button>
   </div>
 
   <h2 class="section">跟读留白</h2>
@@ -630,7 +747,8 @@ async function playLoop() {
     refreshPlayerCard();
     await sleep(700);
     if (my !== player.gen) return;
-    await speak(item.ko, S.settings.rate);
+    if (S.settings.spell) await speakSpell(item.ko, S.settings.rate);
+    else await speak(item.ko, S.settings.rate);
     if (my !== player.gen) return;
     await sleep(S.settings.gap);
     if (my !== player.gen) return;
@@ -740,6 +858,8 @@ function bindView() {
         logStudy(1);
       }
       if (a === 'commute') go('commute');
+      if (a === 'intro') { go('intro'); if (!S.introDone) { S.introDone = true; save(); } }
+      if (a === 'go-alphabet') { basicTab = 'vowel'; go('basics'); }
       if (a === 'travel') go('cards');
       if (a === 'grammar') { basicTab = 'gram'; go('basics'); }
       if (a === 'vocab') { basicTab = 'vocab'; go('basics'); }
@@ -757,6 +877,9 @@ function bindView() {
 
     const lt = t.closest('[data-letter]');
     if (lt) { showLetter(lt.dataset.letter, lt.dataset.side); return; }
+
+    const iw = t.closest('[data-iw]');
+    if (iw) { introOpen = introOpen === +iw.dataset.iw ? null : +iw.dataset.iw; render(); return; }
 
     const bt = t.closest('[data-btab]');
     if (bt) { basicTab = bt.dataset.btab; render(); return; }
@@ -786,6 +909,10 @@ function bindView() {
       const k = set.dataset.set;
       if (k === 'blind') S.settings.blind = !S.settings.blind;
       if (k === 'loop') S.settings.loop = !S.settings.loop;
+      if (k === 'spell') {
+        S.settings.spell = !S.settings.spell;
+        if (S.settings.spell && !pickKoVoice()) showToast('逐字拼读在本机韩语语音下效果最好；当前将使用在线朗读。', 3600);
+      }
       if (k === 'slow') S.settings.rate = S.settings.rate < 0.9 ? 0.92 : 0.72;
       save(); render();
       return;

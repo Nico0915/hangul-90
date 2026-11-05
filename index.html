@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="icon.png" />
 <link rel="icon" type="image/png" href="icon.png" />
 <title>한글 90 · 碎片时间学韩语</title>
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
 <div class="shell">
@@ -62,13 +62,13 @@
   </nav>
 
 </div>
-<script src="data.js"></script>
-<script src="timeline.js"></script>
-<script src="app.js"></script>
+<script src="data.js?v=5"></script>
+<script src="timeline.js?v=5"></script>
+<script src="app.js?v=5"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () { });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(function () { });
   });
 }
 </script>

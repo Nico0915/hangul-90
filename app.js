@@ -112,37 +112,67 @@ function speedVal() { return (SPEEDS.find(x => x.key === S.settings.speed) || SP
 function speedLabel() { return (SPEEDS.find(x => x.key === S.settings.speed) || SPEEDS[0]).label; }
 
 let mergedAudio = null;
-let mergedReady = null;
-function getMerged() {
-  if (!mergedReady) {
+function ensureAudio() {
+  if (!mergedAudio) {
     mergedAudio = new Audio();
     mergedAudio.preload = 'auto';
     mergedAudio.src = 'audio/all.m4a';
-    mergedReady = new Promise(res => {
-      if (mergedAudio.readyState >= 1) { res(true); return; }
-      mergedAudio.addEventListener('loadedmetadata', () => res(true), { once: true });
-      mergedAudio.addEventListener('error', () => res(false), { once: true });
-      setTimeout(() => res(mergedAudio.readyState >= 1), 15000);
-    });
-    try { mergedAudio.load(); } catch (e) { }
   }
-  return mergedReady;
+  return mergedAudio;
+}
+function waitMeta(a, ms) {
+  if (a.readyState >= 1) return Promise.resolve(true);
+  return new Promise(res => {
+    let timer;
+    const fin = v => {
+      clearTimeout(timer);
+      a.removeEventListener('loadedmetadata', ok);
+      a.removeEventListener('error', bad);
+      res(v);
+    };
+    const ok = () => fin(true);
+    const bad = () => fin(false);
+    a.addEventListener('loadedmetadata', ok, { once: true });
+    a.addEventListener('error', bad, { once: true });
+    timer = setTimeout(() => fin(a.readyState >= 1), ms || 60000);
+  });
+}
+
+/* iOS Safari 会忽略 preload，必须用一次用户手势内的静音 play 触发下载 */
+function primeAudio() {
+  const a = ensureAudio();
+  if (a.readyState >= 1) return;
+  a.muted = true;
+  const p = a.play();
+  if (p && p.then) {
+    p.then(() => {
+      const stop = () => { a.pause(); a.muted = false; a.removeEventListener('loadedmetadata', stop); };
+      if (a.readyState >= 1) stop();
+      else a.addEventListener('loadedmetadata', stop, { once: true });
+    }).catch(() => { a.muted = false; });
+  }
 }
 
 async function playClip(text, rate) {
   const seg = (typeof AUDIO_TIMELINE !== 'undefined') ? AUDIO_TIMELINE[String(text).trim()] : null;
   if (!seg) return false;
-  const ready = await getMerged();
-  if (!ready) return false;
+  const a = ensureAudio();
   const r = rate || speedVal();
   try {
-    mergedAudio.pause();
-    mergedAudio.currentTime = Math.max(0, seg[0]);
-    mergedAudio.playbackRate = r;
-    await mergedAudio.play();
-  } catch (e) { return false; }
+    if (a.readyState < 1) {
+      a.muted = true;
+      try { await a.play(); } catch (e) { }
+      const ok = await waitMeta(a, 60000);
+      a.muted = false;
+      if (!ok) { showToast('发音包还在下载，稍等几秒再点一次（只需联网下载一次）', 4200); return false; }
+      a.pause();
+    }
+    a.currentTime = Math.max(0, seg[0]);
+    a.playbackRate = r;
+    await a.play();
+  } catch (e) { a.muted = false; return false; }
   await sleep(Math.max(450, (seg[1] * 1000) / r));
-  try { mergedAudio.pause(); } catch (e) { }
+  try { a.pause(); } catch (e) { }
   return true;
 }
 
@@ -209,7 +239,9 @@ let offlineBusy = false;
 async function precacheAll(progress) {
   if (offlineBusy) return;
   offlineBusy = true;
-  await getMerged();
+  const a = ensureAudio();
+  primeAudio();
+  await waitMeta(a, 60000);
   await fetch('audio/all.m4a', { cache: 'force-cache' }).catch(() => { });
   offlineBusy = false;
   if (progress) progress(1, 1);
@@ -1009,8 +1041,9 @@ paintStreak();
 bindView();
 render();
 
-// 首次使用时把语音引擎预热，否则 iOS/Safari 需要用户手势后才可用
+// 用户第一次点击（任意位置）时，趁手势内静音触发发音包下载；之后点朗读即可瞬间出声
 document.addEventListener('click', function warm() {
+  try { const a = ensureAudio(); if (a.readyState < 1 && !a.muted) primeAudio(); } catch (e) { }
   try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } } catch (e) { }
   document.removeEventListener('click', warm);
 }, { once: true });

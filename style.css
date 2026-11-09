@@ -594,3 +594,24 @@ h2.section:first-child{margin-top:14px;}
   z-index:99;
 }
 .toast.is-on{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ---------- 字母详情：音值 / 名称 / 例词 三行对照 ---------- */
+.sound-rows{display:flex;flex-direction:column;gap:8px;margin-top:14px;}
+.sound-row{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  grid-template-areas:"label ko btn" "note note note";
+  gap:3px 10px;align-items:center;
+  padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--r-md);
+  background:var(--surface);
+}
+.sound-row.is-main{
+  border-color:rgba(217,85,46,.5);
+  background:rgba(217,85,46,.04);
+}
+.sr-label{grid-area:label;font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.sr-ko{grid-area:ko;font-size:19px;font-weight:600;font-family:serif;line-height:1.2;}
+.sr-note{grid-area:note;font-size:11.5px;line-height:1.5;color:var(--ink-2);}
+.sound-row .speak{grid-area:btn;justify-self:end;}
+.sound-row.is-main .sr-ko{color:var(--accent);}

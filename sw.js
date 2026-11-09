@@ -1,8 +1,8 @@
 /* 한글 90 — 离线缓存
    音频：cache-first（首次播放/预下载后永久离线可用）
    页面代码：network-first（保证更新能及时生效，断网时回退缓存） */
-const CACHE = 'hangul90-v6';
-const CORE = ['./', './index.html', './style.css?v=5', './data.js?v=5', './timeline.js?v=5', './app.js?v=5', './icon.png'];
+const CACHE = 'hangul90-v7';
+const CORE = ['./', './index.html', './style.css?v=6', './data.js?v=6', './timeline.js?v=6', './app.js?v=6', './icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));

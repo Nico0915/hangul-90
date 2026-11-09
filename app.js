@@ -480,24 +480,34 @@ function renderBasics() {
   let body = '';
 
   if (basicTab === 'vowel' || basicTab === 'cons') {
-    const list = LETTERS[basicTab === 'vowel' ? 'vowels' : 'consonants'];
-    body = `<div class="letter-grid">${list.map(x => `
+    const isVowel = basicTab === 'vowel';
+    const list = LETTERS[isVowel ? 'vowels' : 'consonants'];
+    body = `<div class="notice" style="margin-bottom:14px;">
+      ${isVowel
+      ? '元音本身就是一个音节，点字母直接听它的读音。卡片第三行是写法示范。'
+      : '<b>辅音不能单独发音</b>。点字母听到的是「辅音 + 轻读 으」的单音节示范（如 ㄱ → 그），这才是它的音值。卡片第三行的「기역」只是<b>字母名称</b>，是两个音节的词、末尾还带收音，不是读音。'}
+    </div>
+    <div class="letter-grid">${list.map(x => `
       <button class="letter" data-letter="${esc(x.ch)}" data-side="${basicTab}" type="button">
         <div class="ch">${esc(x.ch)}</div>
         <div class="rm">${esc(x.rm)}</div>
         <div class="nm">${esc(x.nm)}</div>
       </button>`).join('')}</div>
-      <p class="tiny muted" style="margin:14px 0 0;">点任意字母看发音要点，也可以直接听。</p>`;
+      <p class="tiny muted" style="margin:14px 0 0;">点任意字母，看发音要点、听音值和例词。</p>`;
   }
 
   if (basicTab === 'batchim') {
     body = `<div class="notice" style="margin-bottom:14px;">
-      收音是韩语最难的部分，但其实只有 <b>7 个代表音</b>。所有收音最终都归到这七个之一。</div>
+      收音是韩语最难的部分，但其实只有 <b>7 个代表音</b>。所有收音最终都归到这七个之一。<br>
+      收音<b>不能单独读出来</b>，所以点喇叭听的是示范词，注意听最后那个「收住」的辅音。</div>
       ${BATCHIM.map(b => `
       <div class="detail">
         <div class="detail-h"><span class="ch">${esc(b.rep)}</span><span class="rm">来自 ${esc(b.from)}</span></div>
         <p>${esc(b.tip)}</p>
-        <div class="ex"><span class="ko">${esc(b.ex)}</span><span class="cn">${esc(b.excn)}</span></div>
+        <div class="ex row-between" style="align-items:center;">
+          <div><span class="ko" style="font-weight:500;">${esc(b.ex)}</span><span class="cn" style="color:var(--ink-3);font-size:12px;margin-left:8px;">${esc(b.excn)} · 听末尾收住的音</span></div>
+          <button class="speak" data-say="${esc(b.ex)}" type="button" aria-label="朗读收音示范"><svg viewBox="0 0 16 16"><path d="M6 3.2 3.4 5.4H1.8v5.2h1.6L6 12.8V3.2Z" fill="currentColor"/><path d="M9.2 5.6a3.4 3.4 0 0 1 0 4.8M11.2 3.9a6.2 6.2 0 0 1 0 8.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+        </div>
       </div>`).join('')}`;
   }
 
@@ -584,27 +594,39 @@ function renderBasics() {
 }
 
 function showLetter(ch, side) {
-  const list = LETTERS[side === 'vowel' ? 'vowels' : 'consonants'];
+  const isVowel = side === 'vowel';
+  const list = LETTERS[isVowel ? 'vowels' : 'consonants'];
   const x = list.find(i => i.ch === ch);
   if (!x) return;
+  const demo = (typeof LETTER_SOUND !== 'undefined' && LETTER_SOUND[ch]) || x.nm;
   const host = $('#view');
   const old = $('#letterDetail');
   if (old) old.remove();
+  const svg = `<svg viewBox="0 0 16 16"><path d="M6 3.2 3.4 5.4H1.8v5.2h1.6L6 12.8V3.2Z" fill="currentColor"/><path d="M9.2 5.6a3.4 3.4 0 0 1 0 4.8M11.2 3.9a6.2 6.2 0 0 1 0 8.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`;
+  const row = (label, ko, note, say, main) => `
+    <div class="sound-row ${main ? 'is-main' : ''}">
+      <span class="sr-label">${esc(label)}</span>
+      <span class="sr-ko">${esc(ko)}</span>
+      <span class="sr-note">${esc(note)}</span>
+      <button class="speak" data-say="${esc(say)}" type="button" aria-label="朗读${esc(label)}">${svg}</button>
+    </div>`;
   const div = document.createElement('div');
   div.id = 'letterDetail';
   div.className = 'detail';
   div.style.marginTop = '14px';
   div.innerHTML = `
-    <div class="detail-h"><span class="ch">${esc(x.ch)}</span><span class="rm">${esc(x.rm)} · ${esc(x.nm)}</span></div>
+    <div class="detail-h"><span class="ch">${esc(x.ch)}</span><span class="rm">${esc(x.rm)}</span></div>
     <p>${esc(x.tip)}</p>
-    <div class="ex row-between" style="align-items:center;">
-      <div><span class="ko" style="font-weight:500;">${esc(x.ex)}</span><span class="cn" style="color:var(--ink-3);font-size:12px;margin-left:8px;">${esc(x.excn)}</span></div>
-      <button class="speak" data-say="${esc(x.ex)}" type="button" aria-label="朗读"><svg viewBox="0 0 16 16"><path d="M6 3.2 3.4 5.4H1.8v5.2h1.6L6 12.8V3.2Z" fill="currentColor"/><path d="M9.2 5.6a3.4 3.4 0 0 1 0 4.8M11.2 3.9a6.2 6.2 0 0 1 0 8.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+    <div class="sound-rows">
+      ${row(isVowel ? '这个元音读' : '音值示范', demo,
+        isVowel ? '一个音节，没有尾音' : '辅音 + 轻读 으，只听开头那个辅音', demo, true)}
+      ${isVowel ? '' : row('字母名称', x.nm, '只是名字，不是读音 —— 你听到的「两个音 + 尾音」就是它', x.nm, false)}
+      ${row('例词', x.ex, x.excn + ' · 放进词里再听一遍', x.ex, false)}
     </div>`;
   const grid = $('.letter-grid', host);
   if (grid) grid.insertAdjacentElement('afterend', div);
   div.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  speak(x.ex);
+  speak(demo);
 }
 
 /* ---------- PRACTICE ---------- */
